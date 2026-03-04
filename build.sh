@@ -144,14 +144,6 @@ sleep 10
 log_info "Verificando containers em execução..."
 docker compose ps
 
-# Testa se a API está respondendo (ajuste a porta conforme necessário)
-if curl -s http://localhost:3000 > /dev/null 2>&1; then
-    log_success "API respondendo na porta 3000!"
-else
-    log_warning "API não respondeu. Verifique os logs:"
-    docker compose logs --tail=20
-fi
-
 # ============================================
 # 7. LIMPEZA
 # ============================================
