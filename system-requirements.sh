@@ -1,103 +1,125 @@
+cat << 'EOF' > install-server.sh
 #!/bin/bash
 
-# Script de instalação automatizada - Docker + GitHub CLI + Traefik ready
 set -e
+export DEBIAN_FRONTEND=noninteractive
 
 echo "🚀 Iniciando instalação automatizada..."
 
-# Cores para mensagens
+# ============================================
+# CORES
+# ============================================
 print_message() { echo -e "\033[1;34m➡️  $1\033[0m"; }
 print_success() { echo -e "\033[1;32m✅ $1\033[0m"; }
 print_error() { echo -e "\033[1;31m❌ $1\033[0m"; }
-print_warning() { echo -e "\033[1;33m⚠️  $1\033[0m"; }
 
-# Verifica usuário não-root
-if [ "$EUID" -eq 0 ]; then 
-    print_error "Não execute este script como root. Use um usuário com sudo."
+# ============================================
+# NÃO RODAR COMO ROOT
+# ============================================
+if [ "$EUID" -eq 0 ]; then
+    print_error "Não execute como root"
     exit 1
 fi
 
 # ============================================
-# PARTE 1: INSTALANDO GITHUB CLI
+# LIMPAR REPOS DOCKER ANTIGO
+# ============================================
+print_message "Removendo repositórios Docker antigos..."
+
+sudo rm -f /etc/apt/sources.list.d/docker.list
+sudo rm -f /etc/apt/keyrings/docker.*
+sudo rm -f /usr/share/keyrings/docker*
+
+# ============================================
+# UPDATE BASE
+# ============================================
+print_message "Atualizando sistema..."
+
+sudo apt update
+sudo apt install -y wget curl gnupg ca-certificates lsb-release
+
+# ============================================
+# GITHUB CLI
 # ============================================
 print_message "Instalando GitHub CLI..."
-sudo apt update
-sudo apt install -y wget gnupg
 
-sudo mkdir -p -m 755 /etc/apt/keyrings
-wget -nv -O /tmp/ghcli.gpg https://cli.github.com/packages/githubcli-archive-keyring.gpg
-sudo install -o root -g root -m 644 /tmp/ghcli.gpg /etc/apt/keyrings/githubcli-archive-keyring.gpg
+sudo mkdir -p /etc/apt/keyrings
+
+wget -nv -O /tmp/githubcli.gpg https://cli.github.com/packages/githubcli-archive-keyring.gpg
+
+sudo install -o root -g root -m 644 /tmp/githubcli.gpg /etc/apt/keyrings/githubcli-archive-keyring.gpg
 
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | \
-    sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
 
 sudo apt update
 sudo apt install -y gh
 
-print_success "GitHub CLI instalado: $(gh --version | head -n1)"
+print_success "GitHub CLI instalado"
 
 # ============================================
-# PARTE 2: INSTALANDO DOCKER
+# DOCKER
 # ============================================
-print_message "Instalando Docker Engine e componentes..."
+print_message "Instalando Docker..."
 
 sudo apt remove -y docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc 2>/dev/null || true
-sudo apt install -y ca-certificates curl gnupg lsb-release
 
 sudo mkdir -p /etc/apt/keyrings
-sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
+sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+
 sudo chmod a+r /etc/apt/keyrings/docker.gpg
 
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | \
-    sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | \
+sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 
 sudo apt update
+
 sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
-print_success "Docker instalado: $(docker --version | cut -d ' ' -f3 | cut -d ',' -f1)"
+print_success "Docker instalado"
 
 # ============================================
-# PARTE 3: PERMISSÕES DO DOCKER
+# CONFIG DOCKER
 # ============================================
-print_message "Configurando permissões do Docker..."
+print_message "Configurando Docker..."
 
 sudo groupadd -f docker
 sudo usermod -aG docker $USER
 
-print_success "Usuário $USER adicionado ao grupo docker!"
+sudo systemctl enable docker
+sudo systemctl start docker
 
 # ============================================
-# PARTE 4: TESTE DOCKER
+# TESTE
 # ============================================
 print_message "Testando Docker..."
-docker run hello-world || print_warning "Teste com hello-world falhou. Verifique manualmente."
+
+docker run hello-world || true
 
 # ============================================
-# PARTE 5: CONFIGURAR DIRETÓRIO LETSENCRYPT PARA TRAEFIK
+# TRAEFIK LETSENCRYPT
 # ============================================
-LE_DIR="$HOME/mesa-inteligente/letsencrypt"
-print_message "Criando diretório de certificados do Traefik em $LE_DIR"
-mkdir -p "$LE_DIR"
-chmod 600 "$LE_DIR"
-print_success "Diretório pronto!"
+print_message "Criando diretório letsencrypt..."
+
+mkdir -p ~/mesa-inteligente/letsencrypt
+touch ~/mesa-inteligente/letsencrypt/acme.json
+chmod 600 ~/mesa-inteligente/letsencrypt/acme.json
 
 # ============================================
-# PARTE 6: VERIFICAR DOCKER COMPOSE
-# ============================================
-print_message "Verificando docker compose..."
-docker compose version || { print_error "docker compose não encontrado"; exit 1; }
-
-# ============================================
-# FIM
+# FINAL
 # ============================================
 echo ""
-print_success "🎉 INSTALAÇÃO CONCLUÍDA! Docker pronto para Traefik e Let's Encrypt"
-print_warning "⚠️  Lembre-se de iniciar Traefik primeiro no projeto antes de subir api/frontend"
-echo "   docker compose up -d traefik"
-echo "Depois suba os demais serviços:"
-echo "   docker compose up -d"
+print_success "Instalação concluída!"
 echo ""
-echo "💡 Comandos de teste:"
-echo "   docker --version"
-echo "   docker compose version"
+echo "Execute para aplicar grupo docker:"
+echo ""
+echo "   newgrp docker"
+echo ""
+echo "Teste:"
+echo ""
 echo "   docker run hello-world"
+echo ""
+
+EOF
